@@ -9,14 +9,15 @@ import datetime
 import importlib
 import os
 import pkgutil
+import shutil
 import sys
 import warnings
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 
 import click
-from graphviz2drawio import graphviz2drawio
 
+# graphviz2drawio import is conditional - loaded only when needed for drawio format
 import modules.config_loader as config_loader
 import modules.helpers as helpers
 from modules.provider_detector import get_primary_provider_or_default
@@ -835,14 +836,44 @@ def render_diagram(
     # Post-process with Graphviz
     click.echo(click.style(f"\nRendering Architecture Image...", fg="white", bold=True))
 
-    # Apply label positioning script
+    # Apply label positioning script if gvpr is available
     bundle_dir = Path(__file__).parent.parent
     path_to_script = Path.cwd() / bundle_dir / "shiftLabel.gvpr"
     path_to_postdot = Path.cwd() / f"{outfile}.dot"
-    os.system(f"gvpr -c -q -f {path_to_script} {path_to_predot} -o {path_to_postdot}")
+    
+    # Apply gvpr post-processing only if available
+    if shutil.which("gvpr"):
+        os.system(f"gvpr -c -q -f {path_to_script} {path_to_predot} -o {path_to_postdot}")
+    else:
+        # If gvpr not available, use pre-render output directly
+        shutil.copy(path_to_predot, path_to_postdot)
 
-    # Handle draw.io format conversion
-    if format == "drawio":
+    # Handle different output formats
+    if format in ["dot", "gv"]:
+        # DOT format - no system Graphviz binaries needed
+        dot_output = Path.cwd() / f"{outfile}.{format}"
+        if path_to_postdot != dot_output:
+            shutil.copy(path_to_postdot, dot_output)
+        click.echo(f"  Output file: {dot_output}")
+        # Clean up temporary file
+        os.remove(path_to_predot)
+        if path_to_postdot != dot_output:
+            os.remove(path_to_postdot)
+    elif format == "drawio":
+        # Draw.io format - requires graphviz2drawio package
+        try:
+            from graphviz2drawio import graphviz2drawio
+        except ImportError:
+            click.echo(
+                click.style(
+                    "\n  ERROR: drawio format requires graphviz2drawio package.\n"
+                    "  Install with: pip install terravision[drawio]",
+                    fg="red",
+                    bold=True,
+                )
+            )
+            exit(1)
+        
         drawio_output = Path.cwd() / f"{outfile}.drawio"
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -854,6 +885,9 @@ def render_diagram(
         os.remove(path_to_predot)
         os.remove(path_to_postdot)
     else:
+        # Rendered formats (png, svg, pdf, etc.) - require system Graphviz
+        helpers.require_graphviz_binaries()
+        
         # Generate final output file using graphviz
         click.echo(f"  Output file: {myDiagram.render()}")
         # Clean up temporary files
