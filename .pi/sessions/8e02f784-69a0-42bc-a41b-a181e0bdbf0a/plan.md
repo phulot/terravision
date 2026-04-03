@@ -1,45 +1,32 @@
 ---
-status: done
-updatedAt: 2026-04-03T13:36:51.819Z
+status: in_progress
+updatedAt: 2026-04-03T14:01:32.337Z
 ---
 
-# Make Graphviz an Optional Dependency
+# Mode HCL-only : Retirer la dépendance à Terraform CLI
 
 ## 1. Objective
 
-Make system Graphviz (`dot`, `gvpr` binaries) and `graphviz2drawio` Python package optional. Users can use terravision for DOT/JSON output without installing system Graphviz. Rendered formats (PNG, SVG, PDF) require Graphviz as optional install.
+Ajouter un mode `--no-terraform` / `--hcl-only` qui génère des diagrammes d'architecture uniquement à partir du parsing HCL des fichiers .tf, sans nécessiter terraform init/plan/graph.
 
 ## 2. Context
 
-### Key files:
-- `pyproject.toml` / `requirements.txt` — dependency declarations
-- `resource_classes/__init__.py` — `Canvas.render()` uses graphviz Python lib (keep as required)
-- `modules/drawing.py` — `graphviz2drawio` import, `gvpr` and `dot` system calls
-- `modules/helpers.py` — `check_dependencies()` currently hard-requires `dot`/`gvpr`
-- `modules/tfwrapper.py` — `convert_dot_to_json()` calls system `dot`
-- `terravision/terravision.py` — CLI, `preflight_check()`
-
-### Strategy:
-- Keep `graphviz` Python package as required (lightweight DOT builder)
-- Move `graphviz2drawio` to optional extras
-- System `dot`/`gvpr` only checked when format needs rendering
-- Add `dot`/`gv` output that skips rendering
-- Graceful errors when Graphviz needed but missing
+Le pipeline actuel dépend de 3 commandes terraform (init, plan, graph). L'exploration montre que :
+- Le parser HCL existant extrait déjà toutes les ressources et attributs
+- `add_relations()` détecte déjà les dépendances par scan des refs HCL
+- Le gap principal = construction du graphdict initial + gestion count/for_each + modules distants
 
 ## 3. Tasks
 
-1. Update `pyproject.toml`: `graphviz2drawio` → optional extras `[project.optional-dependencies.drawio]`
-2. Update `requirements.txt`: remove `graphviz2drawio`
-3. Update `modules/helpers.py`: `check_dependencies()` split into required/optional
-4. Update `modules/drawing.py`: lazy import `graphviz2drawio`, support `dot`/`gv` format without system graphviz, graceful errors
-5. Update `modules/tfwrapper.py`: `convert_dot_to_json()` check for system graphviz
-6. Update `terravision/terravision.py`: format-aware preflight
-7. Update `Dockerfile` if needed
+1. Créer `modules/hcl_graph_builder.py` — construit graphdict depuis all_resource/all_data
+2. Adapter le CLI et le pipeline — flag `--no-terraform`, routing, preflight
+3. Gestion des modules distants sans terraform init
+4. Tests et validation
 
 ## 4. Validation
 
-- [ ] `graphviz2drawio` in optional deps extras
-- [ ] `dot`/`gv` output works without system Graphviz
-- [ ] Clear error when system Graphviz missing for PNG/SVG
-- [ ] `graphdata` command works without system Graphviz
-- [ ] Existing tests pass
+- [ ] `terravision draw --source ./my-tf-project --no-terraform` génère un diagramme
+- [ ] `terravision graphdata --source ./my-tf-project --no-terraform` génère le JSON
+- [ ] Pas besoin de terraform installé en mode HCL-only
+- [ ] Les diagrammes sont cohérents avec le mode terraform-backed
+- [ ] Tests existants passent toujours

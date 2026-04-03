@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from typing import Any, Dict, List, Optional
 import json
+import os
 import sys
 import click
 
@@ -15,6 +16,7 @@ import modules.resource_handlers as resource_handlers
 import modules.llm as llm
 import modules.validators as validators
 import modules.fileparser as fileparser
+import modules.hcl_graph_builder as hcl_graph_builder
 from modules.config_loader import load_config
 from modules.provider_detector import detect_providers
 from importlib.metadata import version
@@ -142,6 +144,7 @@ def compile_tfdata(
     planfile: str = "",
     graphfile: str = "",
     upgrade: bool = False,
+    no_terraform: bool = False,
 ) -> Dict[str, Any]:
     """Compile Terraform data from source files into enriched graph dictionary.
 
@@ -158,7 +161,29 @@ def compile_tfdata(
         Enriched tfdata dictionary with graphdict and metadata
     """
     already_processed = False
-    if planfile:
+    if no_terraform:
+        # HCL-only mode: parse Terraform files directly without terraform CLI
+        click.echo(
+            click.style(
+                "\nHCL-only mode: Building graph from Terraform source files without terraform CLI.\n"
+                "  Note: count/for_each with dynamic values will show as single resources.\n"
+                "  Note: Data source runtime values are not available.\n",
+                fg="cyan",
+                bold=True,
+            )
+        )
+        validators.validate_source(source)
+        tfdata = dict()
+        # Resolve source path
+        if os.path.isdir(source):
+            codepath = [os.path.abspath(source)]
+        else:
+            codepath = [source]
+        tfdata = fileparser.read_tfsource(codepath, varfile, annotate, tfdata)
+        tfdata = hcl_graph_builder.build_graphdict_from_hcl(tfdata)
+        if debug:
+            helpers.export_tfdata(tfdata)
+    elif planfile:
         validators.validate_pregenerated_inputs(planfile, graphfile, source)
         tfdata = tfwrapper.process_pregenerated_source(
             planfile, graphfile, source, annotate, debug
@@ -247,15 +272,19 @@ def compile_tfdata(
     return tfdata
 
 
-def preflight_check(aibackend: Optional[str] = None) -> None:
+def preflight_check(aibackend: Optional[str] = None, hcl_only: bool = False) -> None:
     """Check required dependencies and Terraform version compatibility.
 
     Args:
         aibackend: AI backend to validate ('ollama' or 'bedrock')
+        hcl_only: If True, skip terraform/git dependency checks
     """
     click.echo(click.style("\nPreflight check..", fg="white", bold=True))
-    helpers.check_dependencies()
-    helpers.check_terraform_version()
+    if not hcl_only:
+        helpers.check_dependencies()
+        helpers.check_terraform_version()
+    else:
+        click.echo("  Skipping terraform checks (HCL-only mode)")
 
     if aibackend:
         # Load default AWS config for preflight (endpoints are the same across providers)
@@ -350,6 +379,12 @@ def cli(ctx) -> None:
     default=False,
     help="Run terraform init with -upgrade to update modules/providers",
 )
+@click.option(
+    "--no-terraform",
+    is_flag=True,
+    default=False,
+    help="Build graph from HCL files only, without running terraform commands",
+)
 def draw(
     debug: bool,
     source: str,
@@ -365,6 +400,7 @@ def draw(
     planfile: str,
     graphfile: str,
     upgrade: bool,
+    no_terraform: bool,
 ) -> None:
     """Draw architecture diagram from Terraform code."""
     if not debug:
@@ -377,9 +413,24 @@ def draw(
                 fg="yellow",
             )
         )
-    preflight_check(aibackend if not planfile else None)
+    if no_terraform and (planfile or graphfile):
+        click.echo(
+            click.style(
+                "WARNING: --planfile and --graphfile are ignored in --no-terraform mode.",
+                fg="yellow",
+            )
+        )
+    if no_terraform and workspace != "default":
+        click.echo(
+            click.style(
+                "WARNING: --workspace is ignored in --no-terraform mode.",
+                fg="yellow",
+            )
+        )
+    preflight_check(aibackend if not planfile else None, hcl_only=no_terraform)
     tfdata = compile_tfdata(
-        source, varfile, workspace, debug, annotate, planfile, graphfile, upgrade
+        source, varfile, workspace, debug, annotate, planfile, graphfile, upgrade,
+        no_terraform=no_terraform,
     )
     # Pass to LLM if this is not a pregraphed JSON
     if "all_resource" in tfdata and aibackend:
@@ -466,6 +517,12 @@ def draw(
     default=False,
     help="Run terraform init with -upgrade to update modules/providers",
 )
+@click.option(
+    "--no-terraform",
+    is_flag=True,
+    default=False,
+    help="Build graph from HCL files only, without running terraform commands",
+)
 def graphdata(
     debug: bool,
     source: str,
@@ -480,6 +537,7 @@ def graphdata(
     planfile: str = "",
     graphfile: str = "",
     upgrade: bool = False,
+    no_terraform: bool = False,
 ) -> None:
     """List cloud resources and relations as drawable JSON."""
     if not debug:
@@ -492,9 +550,24 @@ def graphdata(
                 fg="yellow",
             )
         )
-    preflight_check(aibackend if not planfile else None)
+    if no_terraform and (planfile or graphfile):
+        click.echo(
+            click.style(
+                "WARNING: --planfile and --graphfile are ignored in --no-terraform mode.",
+                fg="yellow",
+            )
+        )
+    if no_terraform and workspace != "default":
+        click.echo(
+            click.style(
+                "WARNING: --workspace is ignored in --no-terraform mode.",
+                fg="yellow",
+            )
+        )
+    preflight_check(aibackend if not planfile else None, hcl_only=no_terraform)
     tfdata = compile_tfdata(
-        source, varfile, workspace, debug, annotate, planfile, graphfile, upgrade
+        source, varfile, workspace, debug, annotate, planfile, graphfile, upgrade,
+        no_terraform=no_terraform,
     )
     # Pass to LLM if this is not a pregraphed JSON
     if "all_resource" in tfdata and aibackend and (not show_services):
