@@ -437,9 +437,14 @@ def _find_references_in_string(
     
     # Handle count.index references - normalize by removing the placeholder
     # e.g., ${aws_subnet.public[count.index].id} should match aws_subnet.public
+    # Also handle bare count.index (without brackets) used in functions like
+    # element(var.subnets, count.index) — very common in Terraform modules
     if "count.index" in text:
-        normalized = text.replace("[count.index]", "")
-        refs.update(_find_references_in_string(normalized, nodes, source_node))
+        # First strip bracketed form, then strip any remaining bare occurrences
+        normalized = text.replace("[count.index]", "").replace("count.index", "0")
+        # Guard against infinite recursion: only recurse if normalization changed the text
+        if normalized != text:
+            refs.update(_find_references_in_string(normalized, nodes, source_node))
     
     # Handle numbered/indexed references (e.g., resource[0], resource~1)
     # Extract base resource name and match against numbered nodes
