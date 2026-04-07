@@ -246,14 +246,26 @@ def compile_tfdata(
         try:
             provider_detection = detect_providers(tfdata)
             tfdata["provider_detection"] = provider_detection
-            click.echo(
-                click.style(
-                    f"\nDetected cloud provider: {provider_detection['primary_provider'].upper()} "
-                    f"({provider_detection['resource_counts'][provider_detection['primary_provider']]} resources)\n",
-                    fg="cyan",
-                    bold=True,
+            if provider_detection["primary_provider"] == "unsupported":
+                non_cloud = [p for p in provider_detection["providers"]]
+                click.echo(
+                    click.style(
+                        f"\nWARNING: No supported cloud provider detected. "
+                        f"Found non-cloud providers: {', '.join(non_cloud)}. "
+                        f"Diagram generation will be skipped.\n",
+                        fg="yellow",
+                        bold=True,
+                    )
                 )
-            )
+            else:
+                click.echo(
+                    click.style(
+                        f"\nDetected cloud provider: {provider_detection['primary_provider'].upper()} "
+                        f"({provider_detection['resource_counts'][provider_detection['primary_provider']]} resources)\n",
+                        fg="cyan",
+                        bold=True,
+                    )
+                )
         except Exception as e:
             click.echo(
                 click.style(
@@ -263,6 +275,10 @@ def compile_tfdata(
                 )
             )
             sys.exit()
+
+    # Skip enrichment for unsupported providers — no cloud-specific logic to apply
+    if tfdata.get("provider_detection", {}).get("primary_provider") == "unsupported":
+        return tfdata
 
     if "all_resource" in tfdata:
         _print_graph_debug(tfdata["graphdict"], "Terraform JSON graph dictionary")
@@ -440,6 +456,16 @@ def draw(
     if simplified:
         graphmaker.simplify_graphdict(tfdata)
         _print_graph_debug(tfdata["graphdict"], "Simplified graphviz dictionary")
+
+    # Skip diagram generation for unsupported providers
+    if tfdata.get("provider_detection", {}).get("primary_provider") == "unsupported":
+        click.echo(
+            click.style(
+                "Skipping diagram generation — no supported cloud provider (AWS/Azure/GCP) detected.",
+                fg="yellow",
+            )
+        )
+        return
 
     # Add provider suffix to output filename for non-AWS providers
     final_outfile = outfile

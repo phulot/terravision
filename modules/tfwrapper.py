@@ -7,10 +7,13 @@ output into internal data structures for diagram generation.
 from typing import Dict, List, Tuple, Any
 import os
 import copy
+import logging
 from pathlib import Path
 import shutil
 import subprocess
 import click
+
+logger = logging.getLogger(__name__)
 import modules.gitlibs as gitlibs
 import modules.helpers as helpers
 import modules.fileparser as fileparser
@@ -337,10 +340,11 @@ def _detect_provider(tfdata):
             detected_provider = max(provider_counts, key=provider_counts.get)
 
     if not detected_provider:
-        raise provider_detector.ProviderDetectionError(
+        logger.warning(
             "Could not detect cloud provider from Terraform plan. "
-            "Ensure your Terraform code contains cloud resources (aws_, azurerm_, google_, etc.)"
+            "No cloud resources (aws_, azurerm_, google_) found — returning 'unsupported'."
         )
+        return "unsupported"
     return detected_provider
 
 
